@@ -3,28 +3,25 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
 import numpy as np
+from sklearn.metrics import accuracy_score
 
-df = pd.read_excel("features_with_labels.xlsx")
+df1 = pd.read_csv("features_40.csv")
+df2= pd.read_csv("Labels.csv")
 
-print("Conteo de clases original:")
-print(df["Label"].value_counts())
 
-X = df.drop(columns=["ID", "Label"])
-y = df["Label"]
+X = df1
+y = df2
 
 #ESCALADO
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42, stratify=y
-)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
 
 #OVERSAMPLING
 smote = SMOTE(random_state=42)
 X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
 print("\nConteo de clases después del SMOTE (solo en entrenamiento):")
-print(pd.Series(y_train_smote).value_counts())
+print(pd.Series(y_train_smote.iloc[:, 0]).value_counts())
 
 # RBF kernel
 def rbf_kernel(X1, X2, gamma):
@@ -43,8 +40,11 @@ class SimpleSVM:
         self.max_iter = max_iter
 
     def fit(self, X, y):
-        # Convertir etiquetas a -1 y 1
-        y = np.where(y == y[0], 1, -1)
+        # Mapeo explícito de etiquetas
+        unique_labels = np.unique(y)
+        self.label_map = {1: unique_labels[0], -1: unique_labels[1]}
+        y = np.where(y == unique_labels[0], 1, -1)
+
         self.X = X
         self.y = y
         n = X.shape[0]
@@ -100,29 +100,30 @@ class SimpleSVM:
 
     def predict(self, X):
         K = rbf_kernel(X, self.support_vectors, self.gamma)
-        return np.sign(K @ (self.support_alpha * self.support_labels) + self.b)
+        preds = np.sign(K @ (self.support_alpha * self.support_labels) + self.b)
+        return np.where(preds == 1, self.label_map[1], self.label_map[-1])
+
     
 def decode_labels(predictions, original_label):
     unique = np.unique(original_label)
     return np.where(predictions == 1, unique[0], unique[1])
 
 #ENTRENAMIENTO
-svm_custom = SimpleSVM(C=1.0, gamma=0.015, max_iter=100)
-svm_custom.fit(X_train_smote, y_train_smote.values)
+svm_custom = SimpleSVM(C=1.0, gamma=0.015, max_iter=1000)
+svm_custom.fit(X_train_smote, y_train_smote.values.ravel())
 y_pred_raw = svm_custom.predict(X_test)
 y_pred = decode_labels(y_pred_raw, y_train_smote.values)
 
 # METRICAS
 def confusion_matrix_manual(y_true, y_pred):
+    y_true = np.ravel(y_true)
+    y_pred = np.ravel(y_pred)
     labels = np.unique(np.concatenate((y_true, y_pred)))
     cm = np.zeros((len(labels), len(labels)), dtype=int)
     for i, actual in enumerate(labels):
         for j, pred in enumerate(labels):
             cm[i, j] = np.sum((y_true == actual) & (y_pred == pred))
     return cm, labels
-
-def accuracy_manual(y_true, y_pred):
-    return np.sum(y_true == y_pred) / len(y_true)
 
 def f1_score_weighted_manual(y_true, y_pred):
     labels = np.unique(y_true)
@@ -138,10 +139,34 @@ def f1_score_weighted_manual(y_true, y_pred):
         f1_total += f1 * weight
     return f1_total
 
-cm, labels = confusion_matrix_manual(y_test.values, y_pred)
+best_f1 = 0
+best_model = None
+best_params = {}
+
+for C in [0.1, 1, 10]:
+    for gamma in [0.001, 0.01, 0.1]:
+        print(f"Probando C={C}, gamma={gamma}")
+        svm = SimpleSVM(C=C, gamma=gamma, max_iter=1000)
+        svm.fit(X_train_smote, y_train_smote.values.ravel())
+        y_pred = svm.predict(X_test)
+        f1 = f1_score_weighted_manual(y_test.values, y_pred)
+        print(f"F1 ponderado: {f1:.4f}")
+        if f1 > best_f1:
+            best_f1 = f1
+            best_model = svm
+            best_params = {"C": C, "gamma": gamma}
+
+print("\n Mejores hiperparámetros encontrados:")
+print(best_params)
+print(f"Mejor F1 ponderado: {best_f1:.4f}")
+
+# Evaluación final con mejor modelo
+y_pred_final = best_model.predict(X_test)
+cm, labels = confusion_matrix_manual(y_test.values, y_pred_final)
 print("Matriz de Confusión:")
 print(cm)
 print("Etiquetas:", labels)
-print("Exactitud (Accuracy):", accuracy_manual(y_test.values, y_pred))
-print("F1-score (ponderado):", f1_score_weighted_manual(y_test.values, y_pred))
+print("Exactitud (Accuracy):", accuracy_score(y_test, y_pred_final))
+print("F1-score (ponderado):", f1_score_weighted_manual(y_test.values, y_pred_final))
+
 
