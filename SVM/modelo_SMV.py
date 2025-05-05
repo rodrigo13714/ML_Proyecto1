@@ -16,7 +16,24 @@ X = df1
 y = df2
 
 #ESCALADO
-scaler = StandardScaler()
+
+class RobustScalerManual:
+    def fit(self, X):
+        X = np.array(X)
+        self.median_ = np.median(X, axis=0)
+        q1 = np.percentile(X, 25, axis=0)
+        q3 = np.percentile(X, 75, axis=0)
+        self.iqr_ = q3 - q1 + 1e-9  # Evita división por cero
+
+    def transform(self, X):
+        X = np.array(X)
+        return (X - self.median_) / self.iqr_
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+
+scaler = RobustScalerManual()
 X_scaled = scaler.fit_transform(X)
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
 
@@ -28,12 +45,10 @@ print(pd.Series(y_train_smote.iloc[:, 0]).value_counts())
 
 # RBF kernel
 def rbf_kernel(X1, X2, gamma):
-    K = np.zeros((X1.shape[0], X2.shape[0]))
-    for i in range(X1.shape[0]):
-        for j in range(X2.shape[0]):
-            diff = X1[i] - X2[j]
-            K[i, j] = np.exp(-gamma * np.dot(diff, diff))
-    return K
+    X1_sq = np.sum(X1 ** 2, axis=1).reshape(-1, 1)
+    X2_sq = np.sum(X2 ** 2, axis=1).reshape(1, -1)
+    dists = X1_sq - 2 * np.dot(X1, X2.T) + X2_sq
+    return np.exp(-gamma * dists)
 
 # MODELO
 class SimpleSVM:
@@ -112,7 +127,7 @@ def decode_labels(predictions, original_label):
     return np.where(predictions == 1, unique[0], unique[1])
 
 #ENTRENAMIENTO
-svm_custom = SimpleSVM(C=1.0, gamma=0.015, max_iter=1000)
+svm_custom = SimpleSVM(C=1.0, gamma=0.015, max_iter=5000)
 svm_custom.fit(X_train_smote, y_train_smote.values.ravel())
 y_pred_raw = svm_custom.predict(X_test)
 y_pred = decode_labels(y_pred_raw, y_train_smote.values)
@@ -150,10 +165,10 @@ best_f1 = 0
 best_model = None
 best_params = {}
 
-for C in [0.1, 1, 10]:
-    for gamma in [0.001, 0.01, 0.1]:
+for C in [0.01, 0.1, 1, 10, 100,5]:
+    for gamma in [0.001, 0.005, 0.01, 0.05, 0.1,2.5]:
         print(f"Probando C={C}, gamma={gamma}")
-        svm = SimpleSVM(C=C, gamma=gamma, max_iter=1000)
+        svm = SimpleSVM(C=C, gamma=gamma, max_iter=10000)
         svm.fit(X_train_smote, y_train_smote.values.ravel())
         y_pred = svm.predict(X_test)
         
@@ -214,9 +229,25 @@ plt.ylabel("PCA 2")
 plt.title("Límites de decisión del SVM en espacio reducido con PCA")
 plt.legend(*scatter.legend_elements(), title="Clases")
 plt.grid(True)
+
+plt.gca().invert_xaxis()
+plt.gca().invert_yaxis()
+
 plt.tight_layout()
 plt.show()
 
+#PREDICCIÓN
+
+nuevo_csv = pd.read_csv("x_test_402.csv") 
+nuevo_csv_scaled = scaler.transform(nuevo_csv)
+predicciones = best_model.predict(nuevo_csv_scaled)
+
+df_resultado = pd.DataFrame({
+    "ID": range(1, len(predicciones) + 1),
+    "Results": predicciones})
+
+df_resultado.to_csv("predicciones_resultado.csv", index=False)
+print("Predicciones guardadas en 'predicciones_resultado.csv'")
 
 
 
