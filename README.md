@@ -1,4 +1,4 @@
-# Proyecto de Clasificación de Audio
+# Proyecto de Clasificación
 
 Este repositorio contiene la implementación y experimentación de distintos algoritmos de aprendizaje supervisado para clasificar señales de audio, utilizando un conjunto de características extraídas previamente.
 
