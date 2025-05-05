@@ -3,7 +3,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
 import numpy as np
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score,f1_score, hinge_loss, mean_squared_error
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+
 
 df1 = pd.read_csv("features_40.csv")
 df2= pd.read_csv("Labels.csv")
@@ -143,14 +146,21 @@ best_f1 = 0
 best_model = None
 best_params = {}
 
+best_f1 = 0
+best_model = None
+best_params = {}
+
 for C in [0.1, 1, 10]:
     for gamma in [0.001, 0.01, 0.1]:
         print(f"Probando C={C}, gamma={gamma}")
         svm = SimpleSVM(C=C, gamma=gamma, max_iter=1000)
         svm.fit(X_train_smote, y_train_smote.values.ravel())
         y_pred = svm.predict(X_test)
-        f1 = f1_score_weighted_manual(y_test.values, y_pred)
+        
+        # F1 ponderado con sklearn
+        f1 = f1_score(y_test.values, y_pred, average='weighted')
         print(f"F1 ponderado: {f1:.4f}")
+
         if f1 > best_f1:
             best_f1 = f1
             best_model = svm
@@ -160,13 +170,54 @@ print("\n Mejores hiperparámetros encontrados:")
 print(best_params)
 print(f"Mejor F1 ponderado: {best_f1:.4f}")
 
-# Evaluación final con mejor modelo
 y_pred_final = best_model.predict(X_test)
+
 cm, labels = confusion_matrix_manual(y_test.values, y_pred_final)
-print("Matriz de Confusión:")
+print("\nMatriz de Confusión:")
 print(cm)
 print("Etiquetas:", labels)
+
 print("Exactitud (Accuracy):", accuracy_score(y_test, y_pred_final))
-print("F1-score (ponderado):", f1_score_weighted_manual(y_test.values, y_pred_final))
+print("F1-score (ponderado):", f1_score(y_test.values, y_pred_final, average='weighted'))
+
+# LOSS
+y_true_binary = np.where(y_test.values == best_model.label_map[1], 1, -1)
+y_scores = rbf_kernel(X_test, best_model.support_vectors, best_model.gamma) @ (
+    best_model.support_alpha * best_model.support_labels
+) + best_model.b
+print("Hinge Loss:", hinge_loss(y_true_binary, y_scores))
+
+# Mean Squared Error
+print("Error Cuadrático Medio (MSE):", mean_squared_error(y_true_binary, y_scores))
+
+#GRÁFICO
+pca = PCA(n_components=2)
+X_scaled_2D = pca.fit_transform(X_scaled)
+
+x_min, x_max = X_scaled_2D[:, 0].min() - 1, X_scaled_2D[:, 0].max() + 1
+y_min, y_max = X_scaled_2D[:, 1].min() - 1, X_scaled_2D[:, 1].max() + 1
+xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100),
+                     np.linspace(y_min, y_max, 100))
+grid_points = np.c_[xx.ravel(), yy.ravel()]
+grid_original_space = pca.inverse_transform(grid_points)
+
+Z = best_model.predict(grid_original_space)
+Z = Z.reshape(xx.shape)
+
+plt.figure(figsize=(10, 6))
+plt.contourf(xx, yy, Z, alpha=0.3, cmap='coolwarm')
+
+scatter = plt.scatter(X_scaled_2D[:, 0], X_scaled_2D[:, 1],
+                      c=y.values.ravel(), cmap='coolwarm', edgecolor='k', s=40)
+plt.xlabel("PCA 1")
+plt.ylabel("PCA 2")
+plt.title("Límites de decisión del SVM en espacio reducido con PCA")
+plt.legend(*scatter.legend_elements(), title="Clases")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
+
 
 
